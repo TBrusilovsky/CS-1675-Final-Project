@@ -1,0 +1,619 @@
+---
+title: 'Final Project Part 2: Regression'
+author: "Thomas Brusilovsky"
+date: "2022-11-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+## Load packages
+
+```{r, load_tidyverse}
+library(tidyverse)
+library(caret)
+```
+
+The code chunk below reads in the final project data.  
+
+```{r, read_final_data}
+df <- readr::read_csv("fall2022_finalproject.csv", col_names = TRUE)
+```
+
+Next, we create a number of other relevant features
+
+```{r, create_derived}
+df_new_cols <- df %>% mutate(x5 = (1 - (x1 + x2 + x3 + x4))) %>% 
+  mutate(w = x2 / (x3 + x4)) %>% 
+  mutate(z = (x1 + x2) / (x4 + x5)) %>% 
+  mutate(t = v1*v2) %>% 
+  mutate(transformed_output = boot::logit(output)) %>% 
+  mutate(binary = case_when(output < .33  ~ 'Event', output >=.33 ~ 'Non-Event')) 
+```
+
+Now, before we can train our models we need to center and standardize our data.
+
+```{r}
+df_derived <- df_new_cols %>% 
+  purrr::keep(is.numeric) %>% 
+  scale() %>% 
+  bind_cols(df_new_cols %>% purrr::discard(is.numeric)) %>% 
+  select(all_of(names(df_new_cols)))
+
+```
+
+```{r}
+df_derived %>% summary()
+```
+
+## Linear Models
+
+Before moving on to more advanced methods, we will use a number of linear models to establish a baseline. We will use the lm() function to fit nine such models.
+
+# Training the models
+
+Model 1: All linear additive features of the base features
+
+```{r}
+lin_mod1 <-lm(transformed_output ~ x1 + x2 + x3 + x4 + v1 + v2 + v3 + v4 + v5, data = df_derived)
+```
+
+Model 2: Interaction of the categorical input with all continuous inputs in the base features
+
+```{r}
+lin_mod2 <-lm(transformed_output ~ m*(x1 + x2 + x3 + x4 + v1 + v2 + v3 + v4 + v5), data = df_derived)
+```
+
+Model 3: All pair-wise interactions of the continuous inputs in the base features
+
+```{r}
+lin_mod3 <- lm(transformed_output ~ (x1 + x2 + x3 + x4 + v1 + v2 + v3 + v4 + v5) * (x1 + x2 + x3 + x4 + v1 + v2 + v3 + v4 + v5),data = df_derived)
+```
+
+Model 4: All linear additive features
+
+```{r}
+#x5 is not included as it is simply a combination of x1-4
+lin_mod4 <- lm(transformed_output ~ . - m - output - binary -x5,data = df_derived)
+```
+
+Model 5: Interaction of the categorical input with all continuous features
+
+```{r}
+#x5 is not included as it is simply a combination of x1-4
+lin_mod5 <- lm(transformed_output ~ m* (. - m - output - binary -x5),data = df_derived)
+```
+
+Model 6: Pair-wise interactions between the continuous features
+
+```{r}
+#x5 is not included as it is simply a combination of x1-4, v1:v2 is excluded as t = v1:v2
+lin_mod6 <- lm(transformed_output ~  (. - m - output - binary -x5) * (. - m - output - binary -x5) - v1:v2,data = df_derived)
+```
+
+Model 7: All linear additive and quadratic features
+
+```{r}
+lin_mod7 <- lm(transformed_output ~ . - m - output - binary -x5 + I(x1^2) + I(x2^2) + I(x3^2) + I(x4^2) + I(v1^2) + I(v2^2) + I(v3^2) + I(v4^2) + I(v5^2) + I(w^2) + I(z^2) + I(t^2)  , data = df_derived)
+```
+
+Model 8: Sin of all continuous features in the base set
+
+```{r}
+lin_mod8 <- lm(transformed_output ~ sin(x1) + sin(x2) + sin(x3) + sin(x4) + sin(v1) + sin(v2) + sin(v3) + sin(v4) + sin(v5), data = df_derived )
+```
+
+Model 9: Interaction between some features from the base set
+
+```{r}
+#features are chosen from those found to be correlated during data exploration
+lin_mod9 <- lm(transformed_output ~ x1*x2 + x1*x3 + x2*x3 + x3*x4 + x2*v4 + x1*v5 + x2*v5, data = df_derived)
+```
+
+#Assessing the models
+
+One method by which we can judge which model is the most accurate is the adjusted R-Squared of the model. Adjusted R-Squared is similar to the R-squared value except it accounts for the number of variables. Thus, we extract the adjusted r-squared value of each of the nine models.
+
+```{r}
+summary(lin_mod1)$adj.r.squared
+summary(lin_mod2)$adj.r.squared
+summary(lin_mod3)$adj.r.squared
+summary(lin_mod4)$adj.r.squared
+summary(lin_mod5)$adj.r.squared
+summary(lin_mod6)$adj.r.squared
+summary(lin_mod7)$adj.r.squared
+summary(lin_mod8)$adj.r.squared
+summary(lin_mod9)$adj.r.squared
+
+```
+
+By this metric, we see that model 6 is the best, with model 7 and model 5 having the two next highest adjusted R-Squared values.
+
+# Coefficient Summaries
+
+Now, we will look at the coefficient summaries and plots of the three best models.
+
+Model 6:
+
+```{r}
+lin_mod6 %>% coefplot::coefplot()
+```
+
+```{r}
+summary(lin_mod6)
+```
+
+Model 7:
+
+```{r}
+lin_mod7 %>% coefplot::coefplot()
+```
+
+```{r}
+summary(lin_mod7) 
+```
+
+Model 5:
+
+```{r}
+lin_mod5 %>% coefplot::coefplot() 
+```
+
+```{r}
+summary(lin_mod5)
+```
+
+In each of the three models, we can see that there are only a small number of significant inputs. Model 7 uses the fewest inputs and while model 6 uses the most. 
+Looking at the three models, we find a few of the most significant inputs, those where the error does not include 0. These inputs include x1, x2, x3, x4, w, x1^2, and x1:z.
+
+
+## Bayesian Linear Models
+
+Now, we will fit two Bayesian linear models. The models we will use are models 6 and 7. 6 was our best model from the previous section, while 7 was a close second so it is also chosen. To fit these models, we will use functions from the rstanarm package which we must thus import. 
+
+```{r}
+library(rstanarm)
+```
+
+We will use a fairly neutral prior R^2 value of .5.
+
+```{r, message=FALSE}
+bays_mod6 <- stan_lm(transformed_output ~  (. - m - output - binary -x5) * (. - m - output - binary -x5) - v1:v2,data = df_derived, prior = R2(location = .5),
+                 seed = 432123)
+```
+
+
+```{r}
+bays_mod7 <- stan_lm(transformed_output ~ . - m - output - binary -x5 + I(x1^2) + I(x2^2) + I(x3^2) + I(x4^2) + I(v1^2) + I(v2^2) + I(v3^2) + I(v4^2) + I(v5^2) + I(w^2) + I(z^2) + I(t^2)  , data = df_derived,prior = R2(location = .5),
+                 seed = 432123)
+```
+
+```{r}
+summary(bays_mod6)
+```
+
+```{r}
+summary(bays_mod7)
+```
+
+Now let us try to compare the two models by looking at their waic values.
+
+```{r}
+bays_mod6$waic <- waic(bays_mod6)
+bays_mod7$waic <- waic(bays_mod7)
+```
+```{r}
+bays_mod6$waic
+```
+```{r}
+bays_mod7$waic
+```
+
+Looking at the waic values, we can clearly see that model 7 is better than model 6.
+
+
+# Model 6 
+
+Having selected model 6 as our best model, let us look further at it. First, we visualize the regression coefficient posterior summary statistics.
+
+```{r}
+plot(bays_mod7, pars = names(bays_mod7$coefficients)) +
+  geom_vline(xintercept = 0, color = "grey", linetype = "dashed", size = 1.0) +
+  theme_bw()
+```
+
+
+  
+Looking at our posterior uncertainty, it appears that we do not have very much noise here. Our sigma here has a mean of 1.3 which is very close to the value of 1.296 found as the residual standard error in the lm model fit above. Our posterior feels relatively precise, even if we chose a relatively general value to use for our sigma. 
+  
+  
+  
+## Linear Model Predictions
+
+Now we will make predictions with our two models and visualize the trends of the logit-transformed response with respect to the inputs. To do this, we must first create a prediction grid to run our models on. First however, we will define a new function, tidy predict, to help us organize our predictions.
+
+```{r}
+tidy_predict <- function(mod, xnew)
+{
+  pred_df <- predict(mod, xnew, interval = "confidence") %>% 
+    as.data.frame() %>% tibble::as_tibble() %>% 
+    dplyr::select(pred = fit, ci_lwr = lwr, ci_upr = upr) %>% 
+    bind_cols(predict(mod, xnew, interval = 'prediction') %>% 
+                as.data.frame() %>% tibble::as_tibble() %>% 
+                dplyr::select(pred_lwr = lwr, pred_upr = upr))
+  
+  xnew %>% bind_cols(pred_df)
+}
+```
+
+
+# Model 6
+
+For model 6, which was our second best model, the most important basic inputs appear to be x1 and x2, so we will use a larger sequence to represent those two inputs and just the median values for the others. 
+
+```{r}
+expand_grid <- expand.grid(x1 = seq(min(df_derived$x1),max(df_derived$x1),length.out = 50),  #values between 0 and 1
+                        x2 = seq(min(df_derived$x2),max(df_derived$x2),length.out = 9),
+                        x3 = median(df_derived$x3),
+                        x4 = median(df_derived$x4),
+                        m = unique(df$m),
+                        v1 = median(df_derived$v1),
+                        v2 = median(df_derived$v2),
+                        v3 = median(df_derived$v3),
+                        v4 = median(df_derived$v4),
+                        v5 = median(df_derived$v5),
+                        output = 1,
+                        w = median(df_derived$w),
+                         z = median(df_derived$z),
+                         t = median(df_derived$t),
+                         x5 = median(df_derived$x5),
+                        KEEP.OUT.ATTRS = FALSE,
+                        stringsAsFactors = FALSE) %>% 
+  as.data.frame() %>% tibble::as_tibble()
+```
+
+Then we add the derived columns
+
+```{r}
+viz_grid <- expand_grid %>% 
+  #mutate(x5 = (1 - (x1 + x2 + x3 + x4))) %>% 
+  #mutate(w = x2 / (x3 + x4)) %>% 
+  #mutate(z = (x1 + x2) / (x4 + x5)) %>% 
+  #mutate(t = v1*v2) %>%
+  mutate(binary = case_when(output < .33  ~ 'Event', output >=.33 ~ 'Non-Event')) 
+```
+
+Now that we have this synthetic data, we can make predictions to view the trends produced by our linear model.
+
+```{r}
+mod6_predictions <- tidy_predict(lin_mod6, viz_grid)
+```
+
+
+Now with our predictions, we can visualize the predictive trends of the model.
+
+```{r}
+mod6_predictions %>%
+  ggplot(mapping = aes(x = x1)) +
+  geom_ribbon(mapping = aes(ymin = pred_lwr, ymax = pred_upr),
+              fill = 'orange') +
+  geom_ribbon(mapping = aes(ymin = ci_lwr, ymax = ci_upr),
+              fill = 'grey') +
+  geom_line(mapping = aes(y = pred),
+            color = 'black') +
+  coord_cartesian(ylim = c(-7, 7)) +
+  facet_wrap(~x2, labeller = "label_both") +
+  theme_bw()
+```
+
+
+
+# Model 7
+
+Model 7 was our best model. Looking at the model, we see that two of our most important base inputs are x1 and x2. x1 itself does not have a high coefficient value, but x1^2 is one of the highest and has a small amount of error. x2 has the highest absolute value coefficient and is significant as its error does not touch 0. Thus, we will use the same grids as before.
+
+```{r}
+expand_grid <- expand.grid(x1 = seq(min(df_derived$x1),max(df_derived$x1),length.out = 50), 
+                        x2 = seq(min(df_derived$x2),max(df_derived$x2),length.out = 9),
+                        x3 = median(df_derived$x1),
+                        x4 = median(df_derived$x4),
+                        m = unique(df$m),
+                        v1 = median(df_derived$v1),
+                        v2 = median(df_derived$v2),
+                        v3 = median(df_derived$v3),
+                        v4 = median(df_derived$v4),
+                        v5 = median(df_derived$v5),
+                        output = 1,
+                        w = median(df_derived$w),
+                         z = median(df_derived$z),
+                         t = median(df_derived$t),
+                         x5 = median(df_derived$x5),
+                        KEEP.OUT.ATTRS = FALSE,
+                        stringsAsFactors = FALSE) %>% 
+  as.data.frame() %>% tibble::as_tibble()
+```
+
+Then we add the derived columns
+
+```{r}
+viz_grid <- expand_grid %>% 
+  #mutate(x5 = (1 - (x1 + x2 + x3 + x4))) %>% 
+  #mutate(w = x2 / (x3 + x4)) %>% 
+  #mutate(z = (x1 + x2) / (x4 + x5)) %>% 
+  #mutate(t = v1*v2) %>%
+  mutate(binary = case_when(output < .33  ~ 'Event', output >=.33 ~ 'Non-Event')) 
+```
+
+Now that we have this synthetic data, we can make predictions to view the trends produced by our linear model.
+
+```{r}
+mod7_predictions <- tidy_predict(lin_mod7, viz_grid)
+```
+
+Now with our predictions, we can visualize the predictive trends of the model.
+
+```{r}
+mod7_predictions %>%
+  ggplot(mapping = aes(x = x1)) +
+  geom_ribbon(mapping = aes(ymin = pred_lwr, ymax = pred_upr),
+              fill = 'orange') +
+  geom_ribbon(mapping = aes(ymin = ci_lwr, ymax = ci_upr),
+              fill = 'grey') +
+  geom_line(mapping = aes(y = pred),
+            color = 'black') +
+  coord_cartesian(ylim = c(-7, 7)) +
+  facet_wrap(~x2, labeller = "label_both") +
+  theme_bw()
+```
+
+# Comparing the models
+
+Looking at the two models, we can see that the predictive trends are somewhat consistent, but clearly rather different. In both cases, the same inputs prove to be very impact but they effect the data in different ways. In model 6, x2 has a large impact on the slope of the prediction, while we see in model 7 it primarily impacts the confidence intervals for the prediction.
+
+
+## Train and tune with resampling
+ 
+To train and tune our models, I will use the carret package. 
+
+```{r}
+library(caret)
+```
+
+We will use a resampling scheme with 5 folds and 5 repeats. Our primary performance metric will be RMSE
+
+```{r}
+my_ctrl <- trainControl(method = 'repeatedcv', number = 5, repeats = 5)
+
+my_metric <- "RMSE"
+```
+
+
+# Linear Models
+
+First we will tune four linear models.
+
+Model 1: Additive features using the “base feature” set
+
+```{r}
+set.seed(15217)
+caret_linear_mod1 <- train(transformed_output ~ x1 + x2 + x3 + x4 + v1 + v2 +v3 + v4 + v5, 
+                           data = df_derived,
+                           method = 'lm',
+                           metric = my_metric,
+                            preProcess = c("center", "scale"),
+                           trControl = my_ctrl)
+```
+
+Model 2: Additive features using the “expanded feature” set
+
+```{r}
+set.seed(15217)
+caret_linear_mod2 <- train(transformed_output ~ x5 + t + z + w + v3 + v4 + v5, 
+                           data = df_derived,
+                           method = 'lm',
+                           metric = my_metric,
+                            preProcess = c("center", "scale"),
+                           trControl = my_ctrl)
+```
+
+Model 3: Model 6 from the previous section
+
+```{r}
+set.seed(15217)
+caret_linear_mod3 <- train(transformed_output ~  (. - m - output - binary -x5) * (. - m - output - binary -x5) - v1:v2, 
+                           data = df_derived,
+                           method = 'lm',
+                           metric = my_metric,
+                            preProcess = c("center", "scale"),
+                           trControl = my_ctrl)
+```
+
+Model 4: Model 7 from the previous section
+
+```{r}
+set.seed(15217)
+caret_linear_mod4 <- train(transformed_output ~ . - m - output - binary -x5 + I(x1^2) + I(x2^2) + I(x3^2) + I(x4^2) + I(v1^2) + I(v2^2) + I(v3^2) + I(v4^2) + I(v5^2) + I(w^2) + I(z^2) + I(t^2), 
+                           data = df_derived,
+                           method = 'lm',
+                           metric = my_metric,
+                            preProcess = c("center", "scale"),
+                           trControl = my_ctrl)
+```
+
+# Regularized regression with Elastic net
+
+Model 5: Interact the categorical variable with all pair-wise interactions of the continuous features
+
+```{r}
+#t and x5 are excluded, x5 because it is a simple combination of x1-4 and t because it is simply v1:v2 and included in the model regardless. 
+set.seed(15217)
+caret_elastic_mod5 <- train(transformed_output ~  m * ( (x1 + x2 + x3 + x4 + v1 + v2 + v3 + v4 + v5 + z + w)*(x1 + x2 + x3 + x4 + v1 + v2 + v3 + v4 + v5 + z + w) ), 
+                           data = df_derived,
+                           method = 'glmnet',
+                           metric = my_metric,
+                            preProcess = c("center", "scale"),
+                           trControl = my_ctrl)
+```
+
+Model 6: Model 6 from the previous section
+
+```{r}
+set.seed(15217)
+caret_elastic_mod6 <- train(transformed_output ~  (. - m - output - binary -x5) * (. - m - output - binary -x5) - v1:v2, 
+                           data = df_derived,
+                           method = 'glmnet',
+                           metric = my_metric,
+                            preProcess = c("center", "scale"),
+                           trControl = my_ctrl)
+```
+
+
+# Neural Network
+
+Model 7: Base Features
+
+```{r}
+set.seed(15217)
+caret_neural_mod7  <- train(transformed_output ~ x1 + x2 + x3 + x4 + v1 + v2 + v3 + v4 + v5 + m, 
+                           data = df_derived,
+                           method = 'nnet',
+                           metric = my_metric,
+                            preProcess = c("center", "scale"),
+                           trControl = my_ctrl,
+                           trace = FALSE)
+```
+
+Model 8: Expanded Features
+
+```{r}
+set.seed(15217)
+caret_neural_mod8  <- train(transformed_output ~ x5 + t + z + w + v3 + v4 + v5 + m, 
+                           data = df_derived,
+                           method = 'nnet',
+                           metric = my_metric,
+                            preProcess = c("center", "scale"),
+                           trControl = my_ctrl,
+                           trace = FALSE)
+```
+
+
+
+# Random Forest
+
+Model 9: Base Set
+
+```{r}
+set.seed(15217)
+caret_forest_mod9 <- train(transformed_output ~ x1 + x2 + x3 + x4 + v1 + v2 + v3 + v4 + v5 + m, 
+                           data = df_derived,
+                           method = 'rf',
+                           metric = my_metric,
+                           trControl = my_ctrl,
+                           importance = TRUE)
+```
+
+Model 10: Expanded Features
+
+```{r}
+set.seed(15217)
+caret_forest_mod10 <- train(transformed_output ~ x5 + t + z + w + v3 + v4 + v5 + m, 
+                           data = df_derived,
+                           method = 'rf',
+                           metric = my_metric,
+                           trControl = my_ctrl,
+                           importance = TRUE)
+```
+
+
+
+# Gradient Boosted Tree
+
+Model 11: Base Features
+
+```{r}
+set.seed(15217)
+caret_boosted_mod11 <- train(transformed_output ~ x1 + x2 + x3 + x4 + v1 + v2 + v3 + v4 + v5 + m, 
+                           data = df_derived,
+                           method = 'xgbTree',
+                           metric = my_metric,
+                           trControl = my_ctrl,
+                           verbosity = 0)
+```
+
+Model 12: Expanded Features
+
+```{r}
+set.seed(15217)
+caret_boosted_mod12 <- train(transformed_output ~ x5 + t + z + w + v3 + v4 + v5 + m, 
+                           data = df_derived,
+                           method = 'xgbTree',
+                           metric = my_metric,
+                           trControl = my_ctrl,
+                           verbosity = 0)
+```
+
+
+
+# Two additional methods
+
+Model 13: Partial Least Squares using the base features
+
+```{r}
+pls_grid <- expand.grid(ncomp = 1:5)
+set.seed(15217)
+caret_pls_mod13 <- train(transformed_output ~ x1 + x2 + x3 + x4 + v1 + v2 + v3 + v4 + v5 + m,
+                 data = df_derived,
+                 method = "pls",
+                 metric = my_metric,
+                 tuneGrid = pls_grid,
+                 preProcess = c("center", "scale"),
+                 trControl = my_ctrl)
+```
+
+Model 14:Support Vector Machines using the base features
+
+```{r}
+set.seed(15217)
+caret_svm_mod14 <- train(transformed_output ~ x1 + x2 + x3 + x4 + v1 + v2 + v3 + v4 + v5 + m,
+                 data = df_derived,
+                 method = "svmRadial",
+                 metric = my_metric,
+                 preProcess = c("center", "scale"),
+                 trControl = my_ctrl)
+```
+
+
+
+
+# Best Model
+
+To help us select a best model, we will compare them using a dot plot.
+
+```{r}
+caret_compare <- resamples(list(Model_1 = caret_linear_mod1, 
+                                Model_2 = caret_linear_mod2,
+                                Model_3 = caret_linear_mod3,
+                                Model_4 = caret_linear_mod4,
+                                Model_5 = caret_elastic_mod5,
+                                Model_6 = caret_elastic_mod6,
+                                Model_7 = caret_neural_mod7,
+                                Model_8 = caret_neural_mod8,
+                                Model_9 = caret_forest_mod9,
+                                Model_10 = caret_forest_mod10,
+                                Model_11 = caret_boosted_mod11,
+                                Model_12 = caret_boosted_mod12,
+                                Model_13 = caret_pls_mod13,
+                                Model_14 = caret_svm_mod14
+                                ))
+```
+
+```{r}
+dotplot(caret_compare)
+```
+
+Our training focused on minimizing the RMSE. Looking at model 9, we see that it has the lowest RMSE, and also both the highest R-Squared and the lowest MAE. It is pretty clear from this data that Model 9, the random forest model using the base data set, is the best model.
+
+

@@ -1,0 +1,334 @@
+---
+title: 'Final Project Part 4: Interpretation and Optimization'
+author: "Thomas Brusilovsky"
+date: "2022-12-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Best Models
+
+In the previous parts of the project, I identified the best models for both regression and classification. In both cases, the best performing model was the Random Forest using only the base features. The second best model was also the same in both cases, the gradient boosted tree similarly using only the base features. From this, I conclude that using the derived features in the 'expanded features' set does not improve the performance of the model, as all four of the best models that I trained did not make use of them.
+
+## The models
+
+Now lets take a look at the models themselves. Since we will use the same data and the same seed, the models recreated below will be exactly the same as those used in the previous parts of the project.
+
+First we need to load in the required packages
+
+```{r, load_tidyverse}
+library(tidyverse)
+library(caret)
+```
+
+Then read in the data
+
+```{r, read_final_data}
+df <- readr::read_csv("fall2022_finalproject.csv", col_names = TRUE)
+```
+
+Next, we create a number of other relevant features. We will do this seperately for each of the two models as they use slightly different inputs.
+
+```{r}
+df_derived_part_2 <- df %>% mutate(x5 = (1 - (x1 + x2 + x3 + x4))) %>% 
+  mutate(w = x2 / (x3 + x4)) %>% 
+  mutate(z = (x1 + x2) / (x4 + x5)) %>% 
+  mutate(t = v1*v2) %>% 
+  mutate(transformed_output = boot::logit(output)) %>% 
+  mutate(binary = case_when(output < .33  ~ 'Event', output >=.33 ~ 'Non-Event')) 
+```
+
+```{r}
+df_derived_part_3 <- df %>% mutate(x5 = (1 - (x1 + x2 + x3 + x4))) %>% 
+  mutate(w = x2 / (x3 + x4)) %>% 
+  mutate(z = (x1 + x2) / (x4 + x5)) %>% 
+  mutate(t = v1*v2) %>% 
+  mutate(binary_outcome = as.factor(case_when(output < .33  ~ 'True', output >=.33 ~ 'False'))) 
+```
+
+Now we can prepare to train the two models. We will start with the model from part 2 (regression).
+
+```{r}
+my_ctrl_2 <- trainControl(method = 'repeatedcv', number = 5, repeats = 5)
+
+my_metric_2 <- "RMSE"
+```
+
+```{r}
+set.seed(15217)
+regression_mod <- train(transformed_output ~ x1 + x2 + x3 + x4 + v1 + v2 + v3 + v4 + v5 + m, 
+                           data = df_derived_part_2,
+                           method = 'rf',
+                           metric = my_metric_2,
+                           trControl = my_ctrl_2,
+                           importance = TRUE)
+```
+
+And then the model from part 3 (classification).
+
+```{r}
+my_ctrl_3 <- trainControl(method = 'repeatedcv', number = 5, repeats = 5, classProbs = TRUE)
+
+my_metric_3 <- "Accuracy"
+```
+
+```{r}
+set.seed(15217)
+classification_mod <- train(binary_outcome ~ x1 + x2 + x3 + x4 + v1 + v2 + v3 + v4 + v5 + m, 
+                           data = df_derived_part_3,
+                           method = 'rf',
+                           metric = my_metric_3,
+                           trControl = my_ctrl_3,
+                           importance = TRUE)
+```
+
+# Most important variables
+
+Now we want to know what the most important variables in each model are.
+
+```{r}
+varImp(regression_mod)
+```
+
+```{r}
+varImp(classification_mod)
+```
+
+We can see that the variable importance is very similar between the two models, but not quite identical. In both cases, x1-3 are the top 3 variables, but in the classification model the other inputs have a much higher impact on the outcome. In both models, v4 has no impact on the outcome.
+
+
+## Visualization
+
+Now that we have identified the most important variables, we can make some predictions and visualize our model's performance. First, let us look at the regression model
+
+# Regression Model
+
+First, we can construct some synthetic data that focuses on the variables that we have identified as the most important. In this case, those are x1 and x2 in that order of importance. 
+
+```{r}
+viz_grid <- expand.grid(x1 = seq(min(df_derived_part_2$x1),max(df_derived_part_2$x1),length.out = 101), 
+                        x2 = seq(min(df_derived_part_2$x2),max(df_derived_part_2$x2),length.out = 9),
+                        x3 = median(df_derived_part_2$x3),
+                        x4 = median(df_derived_part_2$x4),
+                        v1 = median(df_derived_part_2$v1),
+                        v2 = median(df_derived_part_2$v2),
+                        v3 = median(df_derived_part_2$v3),
+                        v4 = median(df_derived_part_2$v4),
+                        v5 = median(df_derived_part_2$v5),
+                        m = unique(df_derived_part_2$m),
+                        KEEP.OUT.ATTRS = FALSE,
+                        stringsAsFactors = FALSE) %>% 
+  as.data.frame() %>% tibble::as_tibble()
+```
+
+Now we can make predictions with the model.
+
+```{r}
+regression_predictions <- predict(regression_mod,viz_grid)
+```
+
+To visualize the results we first attach the predictions to the synthetic data that produced them.
+
+```{r}
+regression_grid <- viz_grid %>% mutate(predictions = regression_predictions)
+```
+
+And visualize the predicted logit-transformed response as a function of our identified most important
+variables.
+
+```{r}
+regression_grid %>% ggplot(mapping = aes(x = x1, y = predictions)) + geom_line() + facet_wrap(~x2, labeller = "label_both")
+```
+
+# Classification Model
+
+Now we can look at the classification model. We can use the same synthetic data that we created for the regression model as the two most important inputs are the same for both models. 
+
+First, we make predictions with the model.
+
+```{r}
+classification_predictions <- predict(classification_mod,viz_grid, type = 'prob')
+```
+
+To visualize the results we first attach the predictions to the synthetic data that produced them.
+
+```{r}
+classification_grid <- viz_grid %>% bind_cols(classification_predictions)
+```
+
+And visualize the predicted event as a function of the identified most important variables.
+
+```{r}
+classification_grid %>% ggplot(mapping = aes(x = x1, y = False)) + geom_point(size = .3) + facet_wrap(~x2, labeller = "label_both")
+```
+
+# Analysis
+
+Looking at the visualizations, we can see that the logit transformed response is minimized when both x1 and x2 take on small values, but not the smallest possible. For x2, the optimal value appears somewhere around .0568, though values ranging up towards .22 are still good. For x1, the optimal value appears somewhere between .08 and .4 and values between .21 and .29 are particularly ideal good. Looking at the variable importance above, we can see that the machine used does not play a major role in either model. In fact, the categorical variable has some of the least impact on the outcome of any of the inputs.
+
+## Identifying optimal input values
+
+Above, we found that which machine m is used has little impact on the model, how we are still potentially interested in optimizing our inputs for each individual machine. In both models, we found x1, x2, and x3 to have the greatest effect on the eventual prediction, and thus likely the largest impact on the quality of the coating created. Thus, it may be valuable to see what our models believe are the best possible values that minimize coating corrosion.
+
+In this situation we can only really use our regression model to optimize and not our classification model. This is because the classification model only returns a chance that > .33 of the surface will be corroded. Thus, there is no real room to optimize as any True result is no more or less optimal than another. Thus, if we use a starting value that the model returns as True, it will immediately stop there and not change any values.
+
+To do this, we will use the optim function. First however, we need to create some functions and data to help us. First, let us create two functions that we will optimize with optim.
+
+```{r}
+#x will be a list containing values of x1, x2, and x3. Mval will be the machine being used. Median values will be used for the other values
+min_regression <- function(x, mval) {
+  input <- data.frame(x1 = x[1],
+                      x2 = x[2],
+                      x3 = x[3],
+                      m = mval,
+                      x4 = median(df_derived_part_2$x4),
+                      v1 = median(df_derived_part_2$v1),
+                      v2 = median(df_derived_part_2$v2),
+                      v3 = median(df_derived_part_2$v3),
+                      v4 = median(df_derived_part_2$v4),
+                      v5 = median(df_derived_part_2$v5))
+  prediction <- predict(regression_mod,input)
+  return(prediction)
+}
+```
+
+Now that we have this function, lets pick some starting values. We have already previously estimated some good values for x1 and x2, so we will use those values. We have not yet examined x3 in depth, so we can start by using the median value and the two quantiles. We will do this twice, once for machine A and once for machine B.
+
+```{r}
+start_guess1 <- c( .24,.0568, median(df_derived_part_2$x3) )
+start_guess2 <- c( .24,.0568, quantile(df_derived_part_2$x3, .25))
+start_guess3 <- c( .24,.0568, quantile(df_derived_part_2$x3, .75))
+```
+
+Now, we can try to optimize the values for the regression model.
+
+```{r}
+regression_optim1A <- optim(start_guess1,
+                          min_regression,
+                          mval = 'A',
+                          method = "BFGS",
+                          hessian = FALSE)
+regression_optim2A <- optim(start_guess2,
+                          min_regression,
+                          mval = 'A',
+                          method = "BFGS",
+                          hessian = FALSE)
+regression_optim3A <- optim(start_guess3,
+                          min_regression,
+                          method = "BFGS",
+                          mval =  'A',
+                          hessian = FALSE)
+
+regression_optim1B <- optim(start_guess1,
+                          min_regression,
+                           mval = 'B',
+                          method = "BFGS",
+                          hessian = FALSE)
+regression_optim2B <- optim(start_guess2,
+                          min_regression,
+                          mval =  'B',
+                          method = "BFGS",
+                          hessian = FALSE)
+regression_optim3B <- optim(start_guess3,
+                          min_regression,
+                          mval =  'B',
+                          method = "BFGS",
+                          hessian = FALSE)
+```
+
+Now we can examine the values we found for each machine. First we will look at machine A. 
+
+```{r}
+optim_resultsA <- data.frame(model = c("reg_1", "reg_2", "reg_3"),
+x1 = c(regression_optim1A$par[1], regression_optim2A$par[1], regression_optim3A$par[1]),
+                            x2 = c(regression_optim1A$par[2], regression_optim2A$par[2], regression_optim3A$par[2]),
+                            x3 = c(regression_optim1A$par[3], regression_optim2A$par[3], regression_optim3A$par[3]),
+                            value = c(regression_optim1A$value, regression_optim2A$value, regression_optim3A$value))
+optim_resultsA
+```
+
+And then machine B.
+
+```{r}
+optim_resultsB <- data.frame(model = c("reg_1", "reg_2", "reg_3"),
+x1 = c(regression_optim1B$par[1], regression_optim2B$par[1], regression_optim3B$par[1]),
+                            x2 = c(regression_optim1B$par[2], regression_optim2B$par[2], regression_optim3B$par[2]),
+                            x3 = c(regression_optim1B$par[3], regression_optim2B$par[3], regression_optim3B$par[3]),
+                            value = c(regression_optim1B$value, regression_optim2B$value, regression_optim3B$value))
+optim_resultsB
+```
+
+
+Looking at the results of our optimization, we find that there are some small differences between the optimization for the two machines. On machine A, the optimal input values to minimize corrosion are x1 = .2047199, x2 = 0.11320332, and x3 = 0.4352302. One machine B, the optimal input values are x1 = .2306300, x2 = 0.13753862, and x3 = 0.8152819. These values are all very similar, but small differences exist. 
+
+We will now run the same optimization on the other three values of m (machines) and show the results.
+
+```{r}
+regression_optim1C <- optim(start_guess1,
+                          min_regression,
+                          mval = 'C',
+                          method = "BFGS",
+                          hessian = FALSE)
+regression_optim1D <- optim(start_guess1,
+                          min_regression,
+                          mval = 'D',
+                          method = "BFGS",
+                          hessian = FALSE)
+regression_optim1E <- optim(start_guess1,
+                          min_regression,
+                          mval = 'E',
+                          method = "BFGS",
+                          hessian = FALSE)
+
+optim_resultsCDE <- data.frame(model = c("machine_A", "machine_B","machine_C", "machine_D", "machine_E"),
+x1 = c(regression_optim1A$par[1],regression_optim1B$par[1], regression_optim1C$par[1], regression_optim1D$par[1], regression_optim1E$par[1]),
+                            x2 = c(regression_optim1A$par[2],regression_optim1B$par[2],regression_optim1C$par[2], regression_optim1D$par[2], regression_optim1E$par[2]),
+                            x3 = c(regression_optim1A$par[3],regression_optim1B$par[3],regression_optim1C$par[3], regression_optim1D$par[3], regression_optim1E$par[3]),
+                            value = c(regression_optim1A$value,regression_optim1B$value,regression_optim1C$value, regression_optim1D$value, regression_optim1E$value))
+optim_resultsCDE
+```
+
+Once again, the values are very close but some slight differences are visible.
+
+
+## Making Predictions
+
+Finally, we will use our two models to make predictions on the holdout dataset. First, we need to read in the holdout data.
+
+```{r}
+df_holdout <- readr::read_csv("fall2022_holdout_inputs.csv", col_names = TRUE)
+```
+
+Then we use that data to make predictions.
+
+```{r}
+holdout_y <- predict(regression_mod, df_holdout)
+holdout_outcome <- predict(classification_mod, df_holdout)
+holdout_prob <- predict(classification_mod,df_holdout, type = 'prob')
+ids <- tibble::rowid_to_column(as.data.frame(holdout_y), "id")
+
+```
+
+And combine that data into a dataframe
+
+```{r}
+holdout_dataframe <- data.frame(id = ids$id,
+                                y = holdout_y,
+                                outcome = holdout_outcome,
+                                probability = holdout_prob$True
+                                )
+holdout_dataframe$outcome <- recode(holdout_dataframe$outcome, True = "event", False = "non-event")
+```
+
+Finally, we need to export it as a csv file.
+
+```{r}
+readr::write_csv(holdout_dataframe,"predictions.csv")
+```
+
+
+
+
